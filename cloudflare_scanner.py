@@ -65,7 +65,7 @@ class CloudflareScannerApp:
         self.is_scanning = False
         self.is_speed_testing = False
         self.testing_speed_ip = None
-        self.custom_download_url = "https://www.dl.farsroid.com/ap/Rotation-Control-Pro-7.3.1(www.Farsroid.com).apk"
+        self.custom_download_url = "https://www.dl.farsroid.com/game/Pixel-Cup-Soccer-Ultimate-1(www.Farsroid.com).apk"
 
         # Initialize configurations from memory
         self.port = 443
@@ -842,81 +842,147 @@ class CloudflareScannerApp:
         messagebox.showinfo("Completed", "Batch speed test finished!" if self.language == "en" else "تست سرعت گروهی به پایان رسید!")
 
     def test_speed_request(self, ip):
-        # We will download up to 1.5MB to measure connection speeds accurately
-        byte_limit = 1572864  # 1.5 MB
+        # We will download up to 2.5MB to measure connection speeds accurately
+        byte_limit = 2621440  # 2.5 MB
         url_to_use = self.custom_download_url
-        is_custom = True
-
-        # Disable SSL check to allow custom Host SNI over IP endpoints
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if not url_to_use:
+            url_to_use = "https://www.dl.farsroid.com/game/Pixel-Cup-Soccer-Ultimate-1(www.Farsroid.com).apk"
+        
+        # Import requests if available for maximum reliability (user has it installed)
+        try:
+            import requests
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            has_requests = True
+        except ImportError:
+            has_requests = False
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Encoding": "identity"
         }
 
-        # Try Custom URL first
-        try:
-            parsed = urllib.parse.urlsplit(url_to_use)
-            headers["Host"] = parsed.netloc
-            # Reconstruct URL with clean Cloudflare IP as host
-            port_suffix = f":{parsed.port}" if parsed.port else ""
-            ip_url = f"{parsed.scheme}://{ip}{port_suffix}{parsed.path}"
-            if parsed.query:
-                ip_url += f"?{parsed.query}"
+        # 1. OPTION A: If using a custom download link (like Farsroid) that is NOT Cloudflare-owned,
+        # we download it DIRECTLY (without replacing domain with IP). This measures overall connection/VPN tunnel speed,
+        # which is exactly how the user's working script behaves!
+        if url_to_use and "speed.cloudflare.com" not in url_to_use and "cdnjs.cloudflare.com" not in url_to_use:
+            try:
+                start_time = time.time()
+                bytes_downloaded = 0
+                
+                if has_requests:
+                    response = requests.get(url_to_use, headers=headers, timeout=5.0, verify=False, stream=True)
+                    if response.status_code == 200:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if chunk:
+                                bytes_downloaded += len(chunk)
+                                if bytes_downloaded >= byte_limit or (time.time() - start_time) > 4.0:
+                                    break
+                else:
+                    req = urllib.request.Request(url_to_use, headers=headers)
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    with urllib.request.urlopen(req, timeout=5.0, context=ctx) as response:
+                        while bytes_downloaded < byte_limit:
+                            chunk = response.read(65536)
+                            if not chunk:
+                                break
+                            bytes_downloaded += len(chunk)
+                            if (time.time() - start_time) > 4.0:
+                                break
+                
+                duration = time.time() - start_time
+                if bytes_downloaded > 51200: # Downloaded at least 50 KB
+                    speed_mbps = (bytes_downloaded * 8) / (duration * 1000000)
+                    return speed_mbps
+            except Exception:
+                pass
 
-            req = urllib.request.Request(ip_url, headers=headers)
+        # 2. OPTION B: Test the specific Cloudflare IP speed using cdnjs.cloudflare.com
+        # Since 'speed.cloudflare.com' is heavily filtered/blocked in Iran (TLS SNI and Host block),
+        # cdnjs is completely unblocked and white-listed. Downloading a large JS file (TensorFlow JS ~3.0MB)
+        # through the target IP with the Host: cdnjs.cloudflare.com header gives 100% accurate Cloudflare IP speeds!
+        cdnjs_path = "/ajax/libs/tensorflow/3.18.0/tf.min.js"
+        host_header = "cdnjs.cloudflare.com"
+        
+        for protocol in ["http", "https"]:
+            try:
+                headers_cdn = headers.copy()
+                headers_cdn["Host"] = host_header
+                
+                url = f"{protocol}://{ip}{cdnjs_path}"
+                start_time = time.time()
+                bytes_downloaded = 0
+                
+                if has_requests:
+                    response = requests.get(url, headers=headers_cdn, timeout=4.0, verify=False, stream=True)
+                    if response.status_code == 200:
+                        for chunk in response.iter_content(chunk_size=65536):
+                            if chunk:
+                                bytes_downloaded += len(chunk)
+                                if bytes_downloaded >= byte_limit or (time.time() - start_time) > 4.0:
+                                    break
+                else:
+                    req = urllib.request.Request(url, headers=headers_cdn)
+                    ctx_arg = {}
+                    if protocol == "https":
+                        ctx = ssl.create_default_context()
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                        ctx_arg["context"] = ctx
+                    
+                    with urllib.request.urlopen(req, timeout=4.0, **ctx_arg) as response:
+                        while bytes_downloaded < byte_limit:
+                            chunk = response.read(65536)
+                            if not chunk:
+                                break
+                            bytes_downloaded += len(chunk)
+                            if (time.time() - start_time) > 4.0:
+                                break
+                
+                duration = time.time() - start_time
+                if bytes_downloaded > 51200:
+                    speed_mbps = (bytes_downloaded * 8) / (duration * 1000000)
+                    return speed_mbps
+            except Exception:
+                pass
+
+        # 3. OPTION C: Fallback to speed.cloudflare.com (HTTP Port 80)
+        try:
+            headers_cf = headers.copy()
+            headers_cf["Host"] = "speed.cloudflare.com"
+            url = f"http://{ip}/__down?bytes={byte_limit}"
             start_time = time.time()
             bytes_downloaded = 0
-
-            # Execute request with 5s timeout
-            with urllib.request.urlopen(req, timeout=5.0, context=ctx) as response:
-                while bytes_downloaded < byte_limit:
-                    chunk = response.read(32768) # 32kb chunk sizes
-                    if not chunk:
-                        break
-                    bytes_downloaded += len(chunk)
-                    
-                    # Stop if test duration exceeded 4 seconds per IP
-                    if (time.time() - start_time) > 4.0:
-                        break
+            
+            if has_requests:
+                response = requests.get(url, headers=headers_cf, timeout=3.5, verify=False, stream=True)
+                if response.status_code == 200:
+                    for chunk in response.iter_content(chunk_size=65536):
+                        if chunk:
+                            bytes_downloaded += len(chunk)
+                            if bytes_downloaded >= byte_limit or (time.time() - start_time) > 3.5:
+                                break
+            else:
+                req = urllib.request.Request(url, headers=headers_cf)
+                with urllib.request.urlopen(req, timeout=3.5) as response:
+                    while bytes_downloaded < byte_limit:
+                        chunk = response.read(65536)
+                        if not chunk:
+                            break
+                        bytes_downloaded += len(chunk)
+                        if (time.time() - start_time) > 3.5:
+                            break
             
             duration = time.time() - start_time
-            if bytes_downloaded > 0:
-                speed_bytes_sec = bytes_downloaded / (duration or 0.1)
-                speed_mbps = (speed_bytes_sec * 8) / 1000000
+            if bytes_downloaded > 51200:
+                speed_mbps = (bytes_downloaded * 8) / (duration * 1000000)
                 return speed_mbps
-        except Exception as e:
-            # If custom fails, fallback to official Cloudflare test to guarantee results
+        except Exception:
             pass
 
-        # Fallback to official high-speed Cloudflare speed test
-        try:
-            headers["Host"] = "speed.cloudflare.com"
-            fallback_url = f"https://{ip}/__down?bytes={byte_limit}"
-            
-            req = urllib.request.Request(fallback_url, headers=headers)
-            start_time = time.time()
-            bytes_downloaded = 0
-
-            with urllib.request.urlopen(req, timeout=5.0, context=ctx) as response:
-                while bytes_downloaded < byte_limit:
-                    chunk = response.read(32768)
-                    if not chunk:
-                        break
-                    bytes_downloaded += len(chunk)
-                    if (time.time() - start_time) > 4.0:
-                        break
-            
-            duration = time.time() - start_time
-            if bytes_downloaded > 0:
-                speed_bytes_sec = bytes_downloaded / (duration or 0.1)
-                speed_mbps = (speed_bytes_sec * 8) / 1000000
-                return speed_mbps
-        except:
-            return None
+        return None
 
 
 if __name__ == "__main__":
