@@ -185,8 +185,8 @@ class CloudflareScannerApp:
         # Right-click Context Menu translation
         self.menu_actions.entryconfigure(0, label="تست سرعت این آی‌پی" if is_fa else "Test Speed of This IP")
         self.menu_actions.entryconfigure(1, label="ذخیره در علاقه‌مندی‌ها" if is_fa else "Add to Saved/Favorites")
-        self.menu_actions.entryconfigure(2, label="کپی آدرس آی‌پی" if is_fa else "Copy IP Address")
-        self.menu_actions.entryconfigure(3, label="حذف از این لیست" if is_fa else "Delete from List")
+        self.menu_actions.entryconfigure(3, label="کپی آدرس آی‌پی" if is_fa else "Copy IP Address")
+        self.menu_actions.entryconfigure(4, label="حذف از این لیست" if is_fa else "Delete from List")
 
         # Tab 2: IP Manager translations
         self.lbl_generator_title.config(text="🔧 رنج‌های رسمی کلادفلر و تولید آی‌پی تصادفی" if is_fa else "🔧 Official Cloudflare Range Generator")
@@ -215,7 +215,7 @@ class CloudflareScannerApp:
         self.tab_scanner.grid_rowconfigure(0, weight=1)
 
         # Left options frame
-        left_frame = tk.Frame(self.tab_scanner, bg=self.card_color, bd=1, relief=tk.SOLID, highlightbackground=self.border_color)
+        left_frame = tk.Frame(self.tab_scanner, bg=self.card_color, bd=1, relief=tk.SOLID)
         left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
         left_frame.grid_columnconfigure(0, weight=1)
 
@@ -453,7 +453,7 @@ class CloudflareScannerApp:
         self.tab_ip_manager.grid_rowconfigure(0, weight=1)
 
         # Left Column: Generator
-        gen_frame = tk.Frame(self.tab_ip_manager, bg=self.card_color, bd=1, relief=tk.SOLID, highlightbackground=self.border_color)
+        gen_frame = tk.Frame(self.tab_ip_manager, bg=self.card_color, bd=1, relief=tk.SOLID)
         gen_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
 
         self.lbl_generator_title = tk.Label(gen_frame, text="", font=("Segoe UI", 11, "bold"), bg=self.card_color, fg="#ffffff")
@@ -487,13 +487,13 @@ class CloudflareScannerApp:
 
 
         # Right Column: Favorites list
-        fav_frame = tk.Frame(self.tab_ip_manager, bg=self.card_color, bd=1, relief=tk.SOLID, highlightbackground=self.border_color)
+        fav_frame = tk.Frame(self.tab_ip_manager, bg=self.card_color, bd=1, relief=tk.SOLID)
         fav_frame.grid(row=0, column=1, sticky="nsew", pady=10)
 
         self.lbl_favorites_title = tk.Label(fav_frame, text="", font=("Segoe UI", 11, "bold"), bg=self.card_color, fg="#ffffff")
         self.lbl_favorites_title.pack(anchor="w", padx=20, pady=(20, 15))
 
-        self.lst_favorites = tk.Listbox(fav_frame, font=("Consolas", 10), bg=self.bg_color, fg=self.text_color, selectbackground=self.accent_color, bd=0, highlightthickness=1, highlightbackground=self.border_color)
+        self.lst_favorites = tk.Listbox(fav_frame, font=("Consolas", 10), bg=self.bg_color, fg=self.text_color, selectbackground=self.accent_color, bd=1, relief=tk.SOLID)
         self.lst_favorites.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 15))
 
         # Favorites utility buttons
@@ -578,7 +578,7 @@ class CloudflareScannerApp:
         self.tab_configs.grid_columnconfigure(0, weight=1)
         self.tab_configs.grid_rowconfigure(0, weight=1)
 
-        wrapper_frame = tk.Frame(self.tab_configs, bg=self.card_color, bd=1, relief=tk.SOLID, highlightbackground=self.border_color)
+        wrapper_frame = tk.Frame(self.tab_configs, bg=self.card_color, bd=1, relief=tk.SOLID)
         wrapper_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.lbl_config_title = tk.Label(wrapper_frame, text="", font=("Segoe UI", 11, "bold"), bg=self.card_color, fg="#ffffff")
@@ -920,7 +920,32 @@ class CloudflareScannerApp:
 
 
 if __name__ == "__main__":
-    # Standard modern Tkinter startup
-    root = tk.Tk()
-    app = CloudflareScannerApp(root)
-    root.mainloop()
+    try:
+        # Standard modern Tkinter startup
+        root = tk.Tk()
+        app = CloudflareScannerApp(root)
+        root.mainloop()
+    except Exception as e:
+        import traceback
+        error_msg = f"An error occurred during startup:\n\n{traceback.format_exc()}"
+        try:
+            with open("error_log.txt", "w", encoding="utf-8") as f:
+                f.write(error_msg)
+        except:
+            pass
+        
+        try:
+            import tkinter.messagebox as messagebox
+            try:
+                if 'root' in locals() and root:
+                    root.withdraw()
+            except:
+                pass
+            messagebox.showerror("Startup Error / خطا در اجرا", error_msg)
+        except:
+            print(error_msg)
+            print("\nPress Enter to exit / کلید اینتر را برای خروج فشار دهید...")
+            try:
+                input()
+            except:
+                pass
