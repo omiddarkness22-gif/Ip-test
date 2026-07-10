@@ -508,12 +508,14 @@ function testSpeed(
 
 // API Route: Ping Batch of IPs (with Concurrency Control)
 app.post("/api/scan/ping", async (req, res) => {
-  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl, testTarget } = req.body;
+  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl, testTarget, pingCount: reqPingCount } = req.body;
   
   if (!Array.isArray(ips) || ips.length === 0) {
     res.status(400).json({ error: "Invalid or empty IP list" });
     return;
   }
+  
+  const pingCount = Math.min(Math.max(Number(reqPingCount) || 1, 1), 10);
   
   let configPort = Number(port) || 443;
   let configTls = tls !== false;
@@ -547,7 +549,18 @@ app.post("/api/scan/ping", async (req, res) => {
   
   // Controlled concurrency scanning
   const concurrencyLimit = 15;
-  const results: Array<{ ip: string; latency?: number; success: boolean; error?: string }> = [];
+  const results: Array<{ 
+    ip: string; 
+    latency?: number; 
+    success: boolean; 
+    error?: string;
+    pingHistory?: number[];
+    packetLoss?: number;
+    jitter?: number;
+    minLatency?: number;
+    maxLatency?: number;
+    pingCount?: number;
+  }> = [];
   
   let index = 0;
   async function worker() {
@@ -555,35 +568,75 @@ app.post("/api/scan/ping", async (req, res) => {
       const currentIndex = index++;
       const ip = ips[currentIndex];
       
-      try {
-        let latency: number;
-        // Direct Tunnel Test for VLESS and Trojan over WS
-        if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
-          try {
-            const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout, testTarget);
-            if (wsResult.latency !== undefined) {
-              latency = wsResult.latency;
-            } else {
-              throw new Error(wsResult.error || "Tunnel connection failed");
-            }
-          } catch (wsErr) {
-            // Fallback to standard TCP/HTTP scan
-            if (targetTestType === "tcp") {
-              latency = await tcpPing(ip, targetPort, targetTimeout);
-            } else {
-              latency = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
-            }
-          }
-        } else {
-          if (targetTestType === "tcp") {
-            latency = await tcpPing(ip, targetPort, targetTimeout);
-          } else {
-            latency = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
-          }
+      const latencies: number[] = [];
+      let successCount = 0;
+      let failureCount = 0;
+      let lastError = "";
+      
+      for (let c = 0; c < pingCount; c++) {
+        if (c > 0) {
+          // Small delay between pings to avoid overloading the socket and to measure real interval variation
+          await new Promise(resolve => setTimeout(resolve, 80));
         }
-        results[currentIndex] = { ip, latency, success: true };
-      } catch (err: any) {
-        results[currentIndex] = { ip, success: false, error: err.message || "Failed" };
+        
+        try {
+          let lat: number;
+          if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
+            try {
+              const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout, testTarget);
+              if (wsResult.latency !== undefined) {
+                lat = wsResult.latency;
+              } else {
+                throw new Error(wsResult.error || "Tunnel connection failed");
+              }
+            } catch (wsErr) {
+              if (targetTestType === "tcp") {
+                lat = await tcpPing(ip, targetPort, targetTimeout);
+              } else {
+                lat = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
+              }
+            }
+          } else {
+            if (targetTestType === "tcp") {
+              lat = await tcpPing(ip, targetPort, targetTimeout);
+            } else {
+              lat = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
+            }
+          }
+          latencies.push(lat);
+          successCount++;
+        } catch (err: any) {
+          failureCount++;
+          lastError = err.message || "Failed";
+        }
+      }
+      
+      if (successCount > 0) {
+        const avgLatency = Math.round(latencies.reduce((a, b) => a + b, 0) / successCount);
+        const packetLoss = Math.round((failureCount / pingCount) * 100);
+        const minLatency = Math.min(...latencies);
+        const maxLatency = Math.max(...latencies);
+        const jitter = maxLatency - minLatency;
+        
+        results[currentIndex] = {
+          ip,
+          latency: avgLatency,
+          success: true,
+          pingHistory: latencies,
+          packetLoss,
+          jitter,
+          minLatency,
+          maxLatency,
+          pingCount
+        };
+      } else {
+        results[currentIndex] = {
+          ip,
+          success: false,
+          error: lastError || "Failed",
+          packetLoss: 100,
+          pingCount
+        };
       }
     }
   }

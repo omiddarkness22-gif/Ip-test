@@ -51,6 +51,7 @@ export default function App() {
   const [useTls, setUseTls] = useState<boolean>(true);
   const [hostHeader, setHostHeader] = useState<string>("speed.cloudflare.com");
   const [testTarget, setTestTarget] = useState<string>("cloudflare");
+  const [pingCount, setPingCount] = useState<number>(3);
   
   // Favorites IPs
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -129,6 +130,14 @@ export default function App() {
     testTargetDesc: isEn 
       ? "Tests ping directly to the target. Speed is measured via the Cloudflare tunnel to prevent timeouts." 
       : "پینگ مستقیماً با سایت هدف (مثلاً اینستاگرام) سنجیده می‌شود. برای جلوگیری از تایم‌اوت، سنجش سرعت واقعی از طریق کلادفلر انجام می‌شود.",
+    pingCountLabel: isEn ? "Ping Cycles (Stability Check)" : "تعداد مرتبه پینگ (بررسی ثبات)",
+    pingCountDesc: isEn 
+      ? "Higher cycles take longer but calculate accurate average latency and packet loss to identify jitter." 
+      : "پینگ متوالی کمک می‌کند میانگین دقیق‌تر و نوسان (jitter) اتصال را برای بررسی ثبات بسنجید.",
+    pingCycle1: isEn ? "1 Cycle (Fast / Instant)" : "۱ مرتبه (پینگ لحظه‌ای و سریع)",
+    pingCycle3: isEn ? "3 Cycles (Recommended)" : "۳ مرتبه (پیشنهادی / تشخیص نوسان معمولی)",
+    pingCycle5: isEn ? "5 Cycles (Detailed)" : "۵ مرتبه (دقیق / بررسی نوسان کامل)",
+    pingCycle10: isEn ? "10 Cycles (Deep Diagnostics)" : "۱۰ مرتبه (ارزیابی پایداری و نوسانات شدید)",
     targetCloudflare: isEn ? "Cloudflare CDN (Default)" : "کلادفلر (عمومی و وبگردی)",
     targetInstagram: isEn ? "Instagram (Test Instagram)" : "اینستاگرام (مخصوص Instagram)",
     targetGoogle: isEn ? "Google / YouTube" : "گوگل و یوتیوب",
@@ -281,7 +290,8 @@ export default function App() {
           hostHeader,
           testType,
           baseConfigUrl,
-          testTarget
+          testTarget,
+          pingCount
         })
       });
 
@@ -597,6 +607,26 @@ export default function App() {
                     </select>
                     <p className="text-[10px] text-gray-400 leading-normal mt-1">
                       {t.testTargetDesc}
+                    </p>
+                  </div>
+
+                  {/* Ping Cycles Selector */}
+                  <div className="space-y-1.5 bg-indigo-950/20 border border-indigo-900/30 p-3.5 rounded-2xl shadow-sm">
+                    <label className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider block">
+                      {t.pingCountLabel}
+                    </label>
+                    <select
+                      value={pingCount}
+                      onChange={(e) => setPingCount(Number(e.target.value))}
+                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 font-medium"
+                    >
+                      <option value={1}>{t.pingCycle1}</option>
+                      <option value={3}>{t.pingCycle3}</option>
+                      <option value={5}>{t.pingCycle5}</option>
+                      <option value={10}>{t.pingCycle10}</option>
+                    </select>
+                    <p className="text-[10px] text-gray-400 leading-normal mt-1">
+                      {t.pingCountDesc}
                     </p>
                   </div>
 
@@ -1050,6 +1080,37 @@ export default function App() {
                           ) : (
                             <div className="px-3 py-1.5 rounded-2xl border border-gray-850 bg-gray-950 text-gray-600 text-xs font-semibold">
                               --
+                            </div>
+                          )}
+
+                          {/* Packet Loss Badge (Multi-Ping only) */}
+                          {result.success && result.packetLoss !== undefined && (
+                            <div className={`px-3 py-1.5 rounded-2xl border text-xs font-bold ${
+                              result.packetLoss === 0 
+                                ? "text-emerald-400 bg-emerald-500/5 border-emerald-500/10"
+                                : result.packetLoss < 40
+                                ? "text-amber-400 bg-amber-500/5 border-amber-500/10 animate-pulse"
+                                : "text-rose-400 bg-rose-500/5 border-rose-500/10 animate-pulse"
+                            }`}>
+                              <span className="text-[10px] text-gray-500 font-medium">{isEn ? "Loss:" : "ریزش (پکت‌لاس):"} </span>
+                              <span className="font-mono">{result.packetLoss}%</span>
+                            </div>
+                          )}
+
+                          {/* Jitter / Stability Badge (Multi-Ping only) */}
+                          {result.success && result.jitter !== undefined && (
+                            <div className={`px-3 py-1.5 rounded-2xl border text-xs font-bold ${
+                              result.jitter < 25
+                                ? "text-emerald-400 bg-emerald-500/5 border-emerald-500/10"
+                                : result.jitter < 60
+                                ? "text-amber-400 bg-amber-500/5 border-amber-500/10"
+                                : "text-rose-400 bg-rose-500/5 border-rose-500/10"
+                            }`}>
+                              <span className="text-[10px] text-gray-500 font-medium">{isEn ? "Stability Jitter:" : "نوسان:"} </span>
+                              <span className="font-mono">±{result.jitter}ms</span>
+                              <span className="text-[9px] text-gray-500 font-medium mr-1.5 select-none font-mono">
+                                ({result.minLatency}-{result.maxLatency})
+                              </span>
                             </div>
                           )}
 

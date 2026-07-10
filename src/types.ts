@@ -14,6 +14,12 @@ export interface IPScanResult {
   speedMbPerSec?: number;
   speedTesting?: boolean;
   speedTested?: boolean;
+  pingHistory?: number[];
+  packetLoss?: number;
+  jitter?: number;
+  minLatency?: number;
+  maxLatency?: number;
+  pingCount?: number;
 }
 
 export interface VpnConfig {
