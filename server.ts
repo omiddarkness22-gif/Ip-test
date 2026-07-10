@@ -539,11 +539,20 @@ app.post("/api/scan/ping", async (req, res) => {
         let latency: number;
         // Direct Tunnel Test for VLESS and Trojan over WS
         if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
-          const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout);
-          if (wsResult.latency !== undefined) {
-            latency = wsResult.latency;
-          } else {
-            throw new Error(wsResult.error || "Tunnel connection failed");
+          try {
+            const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout);
+            if (wsResult.latency !== undefined) {
+              latency = wsResult.latency;
+            } else {
+              throw new Error(wsResult.error || "Tunnel connection failed");
+            }
+          } catch (wsErr) {
+            // Fallback to standard TCP/HTTP scan
+            if (targetTestType === "tcp") {
+              latency = await tcpPing(ip, targetPort, targetTimeout);
+            } else {
+              latency = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
+            }
           }
         } else {
           if (targetTestType === "tcp") {
