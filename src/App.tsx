@@ -52,6 +52,7 @@ export default function App() {
   const [hostHeader, setHostHeader] = useState<string>("speed.cloudflare.com");
   const [testTarget, setTestTarget] = useState<string>("cloudflare");
   const [pingCount, setPingCount] = useState<number>(3);
+  const [concurrencyLimit, setConcurrencyLimit] = useState<number>(10);
   
   // Favorites IPs
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -138,6 +139,17 @@ export default function App() {
     pingCycle3: isEn ? "3 Cycles (Recommended)" : "۳ مرتبه (پیشنهادی / تشخیص نوسان معمولی)",
     pingCycle5: isEn ? "5 Cycles (Detailed)" : "۵ مرتبه (دقیق / بررسی نوسان کامل)",
     pingCycle10: isEn ? "10 Cycles (Deep Diagnostics)" : "۱۰ مرتبه (ارزیابی پایداری و نوسانات شدید)",
+    concurrencyLimitLabel: isEn ? "Concurrent Tested IPs" : "تعداد تست پینگ همزمان",
+    concurrencyLimitDesc: isEn 
+      ? "Fewer concurrent requests are slower but prevent network congestion, yielding more precise latency." 
+      : "تعداد آی‌پی‌هایی که به صورت همزمان پینگ می‌شوند. تعداد کمتر مانع شلوغی شبکه و خطای تایم‌اوت کاذب می‌شود.",
+    concurrency1: isEn ? "1 IP at a time (Sequential & Most Precise)" : "۱ آی‌پی به صورت نوبتی (دقیق‌ترین حالت)",
+    concurrency3: isEn ? "3 IPs concurrently (Ultra-precise)" : "۳ آی‌پی همزمان (بسیار دقیق)",
+    concurrency5: isEn ? "5 IPs concurrently (Highly stable)" : "۵ آی‌پی همزمان (ثبات عالی)",
+    concurrency10: isEn ? "10 IPs concurrently (Recommended)" : "۱۰ آی‌پی همزمان (پیشنهادی و متعادل)",
+    concurrency15: isEn ? "15 IPs concurrently (Fast)" : "۱۵ آی‌پی همزمان (سریع)",
+    concurrency25: isEn ? "25 IPs concurrently (Turbo)" : "۲۵ آی‌پی همزمان (توربو و سریع)",
+    removeTimeoutsBtn: isEn ? "Remove Offline & Failed IPs" : "حذف آی‌پی‌های قطع و ناموفق",
     targetCloudflare: isEn ? "Cloudflare CDN (Default)" : "کلادفلر (عمومی و وبگردی)",
     targetInstagram: isEn ? "Instagram (Test Instagram)" : "اینستاگرام (مخصوص Instagram)",
     targetGoogle: isEn ? "Google / YouTube" : "گوگل و یوتیوب",
@@ -262,6 +274,26 @@ export default function App() {
     localStorage.setItem("cf_ips_to_scan", JSON.stringify(updatedIps));
   };
 
+  const handleRemoveTimeoutIps = () => {
+    const activeOrUntestedIps = ipsToScan.filter(ip => {
+      const result = scanResults.find(r => r.ip === ip);
+      if (!result) return true;
+      if (result.success) return true;
+      const isPending = result.error === "Pending..." || result.error === "در انتظار..." || !result.error;
+      return isPending;
+    });
+
+    const activeOrUntestedResults = scanResults.filter(r => {
+      if (r.success) return true;
+      const isPending = r.error === "Pending..." || r.error === "در انتظار..." || !r.error;
+      return isPending;
+    });
+
+    setIpsToScan(activeOrUntestedIps);
+    setScanResults(activeOrUntestedResults);
+    localStorage.setItem("cf_ips_to_scan", JSON.stringify(activeOrUntestedIps));
+  };
+
   // Launch Ping Tests (Full Batch scan)
   const handleStartScan = async () => {
     if (ipsToScan.length === 0 || isScanning) return;
@@ -292,7 +324,8 @@ export default function App() {
           testType,
           baseConfigUrl,
           testTarget,
-          pingCount
+          pingCount,
+          concurrencyLimit
         })
       });
 
@@ -635,6 +668,28 @@ export default function App() {
                     </p>
                   </div>
 
+                  {/* Concurrency Selector */}
+                  <div className="space-y-1.5 bg-indigo-950/20 border border-indigo-900/30 p-3.5 rounded-2xl shadow-sm">
+                    <label className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider block">
+                      {t.concurrencyLimitLabel}
+                    </label>
+                    <select
+                      value={concurrencyLimit}
+                      onChange={(e) => setConcurrencyLimit(Number(e.target.value))}
+                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 font-medium"
+                    >
+                      <option value={1}>{t.concurrency1}</option>
+                      <option value={3}>{t.concurrency3}</option>
+                      <option value={5}>{t.concurrency5}</option>
+                      <option value={10}>{t.concurrency10}</option>
+                      <option value={15}>{t.concurrency15}</option>
+                      <option value={25}>{t.concurrency25}</option>
+                    </select>
+                    <p className="text-[10px] text-gray-400 leading-normal mt-1">
+                      {t.concurrencyLimitDesc}
+                    </p>
+                  </div>
+
                   {/* Settings grid */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
@@ -860,6 +915,17 @@ export default function App() {
                   <RotateCcw className="w-4 h-4 ml-1.5" />
                   <span>{t.resetList}</span>
                 </button>
+
+                {failedCount > 0 && (
+                  <button
+                    onClick={handleRemoveTimeoutIps}
+                    disabled={isScanning || isBatchTestingSpeed || !!testingSpeedIp}
+                    className="bg-rose-950/25 hover:bg-rose-900/35 border border-rose-900/30 hover:border-rose-800 text-rose-400 font-bold text-xs px-5 py-4 rounded-2xl transition-all flex items-center justify-center space-x-1.5 space-x-reverse"
+                  >
+                    <XCircle className="w-4 h-4 ml-1.5 text-rose-400" />
+                    <span>{t.removeTimeoutsBtn}</span>
+                  </button>
+                )}
               </div>
 
               {/* Progress bar */}

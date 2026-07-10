@@ -529,7 +529,7 @@ function testSpeed(
 
 // API Route: Ping Batch of IPs (with Concurrency Control)
 app.post("/api/scan/ping", async (req, res) => {
-  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl, testTarget, pingCount: reqPingCount } = req.body;
+  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl, testTarget, pingCount: reqPingCount, concurrencyLimit: reqConcurrencyLimit } = req.body;
   
   if (!Array.isArray(ips) || ips.length === 0) {
     res.status(400).json({ error: "Invalid or empty IP list" });
@@ -537,6 +537,7 @@ app.post("/api/scan/ping", async (req, res) => {
   }
   
   const pingCount = Math.min(Math.max(Number(reqPingCount) || 1, 1), 10);
+  const concurrencyLimit = Math.min(Math.max(Number(reqConcurrencyLimit) || 10, 1), 50);
   
   let configPort = Number(port) || 443;
   let configTls = tls !== false;
@@ -569,7 +570,6 @@ app.post("/api/scan/ping", async (req, res) => {
   const targetTestType = testType || "tcp"; // "tcp" or "http"
   
   // Controlled concurrency scanning
-  const concurrencyLimit = 15;
   const results: Array<{ 
     ip: string; 
     latency?: number; 
