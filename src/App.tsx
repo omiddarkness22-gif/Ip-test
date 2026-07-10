@@ -59,7 +59,7 @@ export default function App() {
   // Filtering & Sorting State
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"all" | "success" | "failed">("all");
-  const [sortBy, setSortBy] = useState<"latency" | "speed" | "ip">("latency");
+  const [sortBy, setSortBy] = useState<"latency" | "speed" | "ip" | "jitter">("latency");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   
   // Scanning Process State
@@ -166,6 +166,7 @@ export default function App() {
     sortByLatency: isEn ? "Sort by Latency" : "مرتب‌سازی بر اساس پینگ",
     sortBySpeed: isEn ? "Sort by Speed" : "مرتب‌سازی بر اساس سرعت",
     sortByIp: isEn ? "Sort by IP" : "مرتب‌سازی بر اساس آی‌پی",
+    sortByJitter: isEn ? "Sort by Jitter (Stability)" : "مرتب‌سازی بر اساس نوسان (پایداری)",
     
     // IP Card Row
     latency: isEn ? "Ping" : "پینگ",
@@ -458,6 +459,10 @@ export default function App() {
         const spA = a.speedMbps ?? 0;
         const spB = b.speedMbps ?? 0;
         comparison = spB - spA; // Speed descending normally, we'll swap if order is desc
+      } else if (sortBy === "jitter") {
+        const jitA = a.success && a.jitter !== undefined ? a.jitter : 99999;
+        const jitB = b.success && b.jitter !== undefined ? b.jitter : 99999;
+        comparison = jitA - jitB;
       } else {
         comparison = a.ip.localeCompare(b.ip);
       }
@@ -986,6 +991,21 @@ export default function App() {
                       }`}
                     >
                       {t.sortByIp} {sortBy === "ip" && (sortOrder === "asc" ? "↑" : "↓")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (sortBy === "jitter") {
+                          setSortOrder(o => o === "asc" ? "desc" : "asc");
+                        } else {
+                          setSortBy("jitter");
+                          setSortOrder("asc");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+                        sortBy === "jitter" ? "bg-indigo-600/10 border-indigo-500 text-indigo-400" : "bg-gray-950 border-gray-800 text-gray-400"
+                      }`}
+                    >
+                      {t.sortByJitter} {sortBy === "jitter" && (sortOrder === "asc" ? "↑" : "↓")}
                     </button>
                   </div>
 

@@ -18,22 +18,32 @@ function tcpPing(ip: string, port: number, timeout: number = 1500): Promise<numb
     const startTime = Date.now();
     const socket = new net.Socket();
     
-    socket.setTimeout(timeout);
+    let isFinished = false;
+    const timer = setTimeout(() => {
+      if (!isFinished) {
+        isFinished = true;
+        socket.destroy();
+        reject(new Error("Timeout"));
+      }
+    }, timeout);
     
     socket.connect(port, ip, () => {
-      const latency = Date.now() - startTime;
-      socket.destroy();
-      resolve(latency);
+      if (!isFinished) {
+        isFinished = true;
+        clearTimeout(timer);
+        const latency = Date.now() - startTime;
+        socket.destroy();
+        resolve(latency);
+      }
     });
     
     socket.on("error", (err) => {
-      socket.destroy();
-      reject(err);
-    });
-    
-    socket.on("timeout", () => {
-      socket.destroy();
-      reject(new Error("Timeout"));
+      if (!isFinished) {
+        isFinished = true;
+        clearTimeout(timer);
+        socket.destroy();
+        reject(err);
+      }
     });
   });
 }
@@ -193,7 +203,7 @@ function testVpnWs(
     timeoutTimer = setTimeout(() => {
       cleanup();
       resolve({ error: "Timeout" });
-    }, timeoutMs + 1500);
+    }, timeoutMs);
     
     ws.on("open", () => {
       connectedTime = Date.now();
@@ -357,7 +367,6 @@ function httpPing(
       port: port,
       path: customPath || "/cdn-cgi/trace",
       method: "GET",
-      timeout: timeout,
       rejectUnauthorized: false,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -370,21 +379,33 @@ function httpPing(
       options.servername = sni || targetHost; // Sets TLS SNI
     }
     
+    let isFinished = false;
+    const timer = setTimeout(() => {
+      if (!isFinished) {
+        isFinished = true;
+        req.destroy();
+        reject(new Error("Timeout"));
+      }
+    }, timeout);
+    
     const req = requestModule.request(options, (res) => {
       res.on("data", () => {}); // Consume response
       res.on("end", () => {
-        const latency = Date.now() - startTime;
-        resolve(latency);
+        if (!isFinished) {
+          isFinished = true;
+          clearTimeout(timer);
+          const latency = Date.now() - startTime;
+          resolve(latency);
+        }
       });
     });
     
     req.on("error", (err) => {
-      reject(err);
-    });
-    
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new Error("Timeout"));
+      if (!isFinished) {
+        isFinished = true;
+        clearTimeout(timer);
+        reject(err);
+      }
     });
     
     req.end();
