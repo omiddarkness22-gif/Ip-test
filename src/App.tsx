@@ -50,6 +50,7 @@ export default function App() {
   const [timeoutMs, setTimeoutMs] = useState<number>(1500);
   const [useTls, setUseTls] = useState<boolean>(true);
   const [hostHeader, setHostHeader] = useState<string>("speed.cloudflare.com");
+  const [testTarget, setTestTarget] = useState<string>("cloudflare");
   
   // Favorites IPs
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -124,6 +125,13 @@ export default function App() {
     settingsHeader: isEn ? "Scan Options" : "تنظیمات اسکنر",
     portLabel: isEn ? "Port" : "پورت مقصد",
     testTypeLabel: isEn ? "Verification Protocol" : "روش تست اتصال",
+    testTargetLabel: isEn ? "Test Destination Target" : "سایت هدف تست (تخصصی)",
+    testTargetDesc: isEn 
+      ? "Select which site to test inside the tunnel (Requires VPN Config base)." 
+      : "سایتی که پینگ/سرعت کانفیگ با آن تست می‌شود (نیازمند پر کردن کادر کانفیگ خام پایه در پایین)",
+    targetCloudflare: isEn ? "Cloudflare CDN (Default)" : "کلادفلر (عمومی و وبگردی)",
+    targetInstagram: isEn ? "Instagram (Test Instagram)" : "اینستاگرام (مخصوص Instagram)",
+    targetGoogle: isEn ? "Google / YouTube" : "گوگل و یوتیوب",
     timeoutLabel: isEn ? "Timeout (ms)" : "حداکثر زمان انتظار (میلی‌ثانیه)",
     hostLabel: isEn ? "Host SNI (HTTP)" : "آدرس SNI / هاست",
     tlsLabel: isEn ? "Use TLS Security" : "استفاده از TLS/SSL",
@@ -272,7 +280,8 @@ export default function App() {
           tls: useTls,
           hostHeader,
           testType,
-          baseConfigUrl
+          baseConfigUrl,
+          testTarget
         })
       });
 
@@ -322,7 +331,8 @@ export default function App() {
           downloadSizeMb,
           downloadTimeoutSec,
           customUrl: customSpeedUrl,
-          baseConfigUrl
+          baseConfigUrl,
+          testTarget
         })
       });
 
@@ -569,6 +579,25 @@ export default function App() {
                         HTTP Trace (Proxy)
                       </button>
                     </div>
+                  </div>
+
+                  {/* Test Target Selector */}
+                  <div className="space-y-1.5 bg-indigo-950/20 border border-indigo-900/30 p-3.5 rounded-2xl shadow-sm">
+                    <label className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider block">
+                      {t.testTargetLabel}
+                    </label>
+                    <select
+                      value={testTarget}
+                      onChange={(e) => setTestTarget(e.target.value)}
+                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 font-medium"
+                    >
+                      <option value="cloudflare">{t.targetCloudflare}</option>
+                      <option value="instagram">{t.targetInstagram}</option>
+                      <option value="google">{t.targetGoogle}</option>
+                    </select>
+                    <p className="text-[10px] text-gray-400 leading-normal mt-1">
+                      {t.testTargetDesc}
+                    </p>
                   </div>
 
                   {/* Settings grid */}

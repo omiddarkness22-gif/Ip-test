@@ -145,7 +145,8 @@ function testVpnWs(
   config: FullParsedConfig,
   action: "ping" | "speed",
   downloadBytes: number = 1024 * 1024, // 1MB default
-  timeoutMs: number = 3000
+  timeoutMs: number = 3000,
+  testTarget: string = "cloudflare"
 ): Promise<VpnWsResult> {
   return new Promise((resolve) => {
     const { protocol, uuidOrPassword, sni, host, path, port, tls } = config;
@@ -199,8 +200,15 @@ function testVpnWs(
       
       let headerBuf: Buffer;
       
-      const targetHost = "speed.cloudflare.com";
-      const destPort = 80;
+      let targetHost = "speed.cloudflare.com";
+      let destPort = 80;
+      
+      if (testTarget === "instagram") {
+        targetHost = "instagram.com";
+      } else if (testTarget === "google") {
+        targetHost = "www.google.com";
+      }
+      
       const hostBuffer = Buffer.from(targetHost, "utf-8");
       
       if (protocol === "vless") {
@@ -243,9 +251,17 @@ function testVpnWs(
       // Build HTTP GET Request to send inside the tunnel
       let httpRequestStr = "";
       if (action === "ping") {
-        httpRequestStr = "GET /cdn-cgi/trace HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n";
+        if (targetHost === "speed.cloudflare.com") {
+          httpRequestStr = "GET /cdn-cgi/trace HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n";
+        } else {
+          httpRequestStr = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n`;
+        }
       } else {
-        httpRequestStr = `GET /__down?bytes=${downloadBytes} HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n`;
+        if (targetHost === "speed.cloudflare.com") {
+          httpRequestStr = `GET /__down?bytes=${downloadBytes} HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n`;
+        } else {
+          httpRequestStr = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n`;
+        }
       }
       const httpPayload = Buffer.from(httpRequestStr, "utf-8");
       const initialFrame = Buffer.concat([headerBuf, httpPayload]);
@@ -488,7 +504,7 @@ function testSpeed(
 
 // API Route: Ping Batch of IPs (with Concurrency Control)
 app.post("/api/scan/ping", async (req, res) => {
-  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl } = req.body;
+  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl, testTarget } = req.body;
   
   if (!Array.isArray(ips) || ips.length === 0) {
     res.status(400).json({ error: "Invalid or empty IP list" });
@@ -540,7 +556,7 @@ app.post("/api/scan/ping", async (req, res) => {
         // Direct Tunnel Test for VLESS and Trojan over WS
         if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
           try {
-            const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout);
+            const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout, testTarget);
             if (wsResult.latency !== undefined) {
               latency = wsResult.latency;
             } else {
@@ -576,7 +592,7 @@ app.post("/api/scan/ping", async (req, res) => {
 
 // API Route: Test Speed for a Single IP
 app.post("/api/scan/speed", async (req, res) => {
-  const { ip, port, tls, hostHeader, downloadSizeMb, downloadTimeoutSec, customUrl, baseConfigUrl } = req.body;
+  const { ip, port, tls, hostHeader, downloadSizeMb, downloadTimeoutSec, customUrl, baseConfigUrl, testTarget } = req.body;
   
   if (!ip) {
     res.status(400).json({ error: "IP address is required" });
@@ -623,7 +639,7 @@ app.post("/api/scan/speed", async (req, res) => {
     // Direct Tunnel Speed Test for VLESS and Trojan over WS
     if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
       try {
-        const wsResult = await testVpnWs(ip, parsedConfig, "speed", downloadBytes, timeoutMs);
+        const wsResult = await testVpnWs(ip, parsedConfig, "speed", downloadBytes, timeoutMs, testTarget);
         if (wsResult.speedBytesPerSec !== undefined) {
           result = {
             speedBytesPerSec: wsResult.speedBytesPerSec,
