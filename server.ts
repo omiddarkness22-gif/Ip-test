@@ -203,10 +203,14 @@ function testVpnWs(
       let targetHost = "speed.cloudflare.com";
       let destPort = 80;
       
-      if (testTarget === "instagram") {
-        targetHost = "instagram.com";
-      } else if (testTarget === "google") {
-        targetHost = "www.google.com";
+      // For Ping, we connect to the requested target (Instagram / Google / Cloudflare)
+      // For Speed, we MUST use speed.cloudflare.com because it is the only host that serves a high-speed dummy file generator.
+      if (action === "ping") {
+        if (testTarget === "instagram") {
+          targetHost = "instagram.com";
+        } else if (testTarget === "google") {
+          targetHost = "www.google.com";
+        }
       }
       
       const hostBuffer = Buffer.from(targetHost, "utf-8");

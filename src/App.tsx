@@ -127,8 +127,8 @@ export default function App() {
     testTypeLabel: isEn ? "Verification Protocol" : "روش تست اتصال",
     testTargetLabel: isEn ? "Test Destination Target" : "سایت هدف تست (تخصصی)",
     testTargetDesc: isEn 
-      ? "Select which site to test inside the tunnel (Requires VPN Config base)." 
-      : "سایتی که پینگ/سرعت کانفیگ با آن تست می‌شود (نیازمند پر کردن کادر کانفیگ خام پایه در پایین)",
+      ? "Tests ping directly to the target. Speed is measured via the Cloudflare tunnel to prevent timeouts." 
+      : "پینگ مستقیماً با سایت هدف (مثلاً اینستاگرام) سنجیده می‌شود. برای جلوگیری از تایم‌اوت، سنجش سرعت واقعی از طریق کلادفلر انجام می‌شود.",
     targetCloudflare: isEn ? "Cloudflare CDN (Default)" : "کلادفلر (عمومی و وبگردی)",
     targetInstagram: isEn ? "Instagram (Test Instagram)" : "اینستاگرام (مخصوص Instagram)",
     targetGoogle: isEn ? "Google / YouTube" : "گوگل و یوتیوب",
