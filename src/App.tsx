@@ -725,6 +725,24 @@ export default function App() {
                       {t.addBtn}
                     </button>
                   </div>
+
+                  {/* Reset Cache & Storage Button */}
+                  <div className="pt-2 border-t border-gray-850">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        localStorage.removeItem("cf_base_config_url");
+                        localStorage.removeItem("cf_download_size_mb");
+                        localStorage.removeItem("cf_download_timeout_sec");
+                        localStorage.removeItem("cf_saved_ips");
+                        localStorage.removeItem("cf_favorites");
+                        window.location.reload();
+                      }}
+                      className="w-full bg-rose-950/20 hover:bg-rose-900/30 border border-rose-900/40 text-rose-400 font-bold text-[11px] py-2 rounded-xl transition-all"
+                    >
+                      {isEn ? "Reset Saved Configs & Local Cache" : "پاکسازی کامل حافظه و ریست تنظیمات"}
+                    </button>
+                  </div>
                 </div>
               </div>
 

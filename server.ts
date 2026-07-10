@@ -90,7 +90,7 @@ function parseFullVpnConfig(config: string): FullParsedConfig | null {
       const pathParam = searchParams.get("path") || undefined;
       const securityParam = searchParams.get("security") || undefined;
       
-      const sni = sniParam || parsedSni;
+      const sni = sniParam || hostParam || parsedSni;
       const host = hostParam || sni;
       const path = pathParam ? decodeURIComponent(pathParam) : undefined;
       const tls = securityParam !== "none";
@@ -677,6 +677,7 @@ async function startServer() {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
