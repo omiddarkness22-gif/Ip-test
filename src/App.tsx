@@ -73,6 +73,15 @@ export default function App() {
   const [customSpeedUrl, setCustomSpeedUrl] = useState<string>(
     "https://www.dl.farsroid.com/ap/Rotation-Control-Pro-7.3.1(www.Farsroid.com).apk"
   );
+  const [baseConfigUrl, setBaseConfigUrl] = useState<string>(() => {
+    return localStorage.getItem("cf_base_config_url") || "";
+  });
+  const [downloadSizeMb, setDownloadSizeMb] = useState<number>(() => {
+    return parseFloat(localStorage.getItem("cf_download_size_mb") || "2.5");
+  });
+  const [downloadTimeoutSec, setDownloadTimeoutSec] = useState<number>(() => {
+    return parseInt(localStorage.getItem("cf_download_timeout_sec") || "8");
+  });
   const [isBatchTestingSpeed, setIsBatchTestingSpeed] = useState<boolean>(false);
   const [batchSpeedProgress, setBatchSpeedProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
 
@@ -94,6 +103,18 @@ export default function App() {
     customSpeedUrlDesc: isEn 
       ? "Downloads this file via each IP to calculate download rate (MB/s)." 
       : "جهت سنجش واقعی سرعت دانلود، از این لینک به عنوان فایل دانلودی در تمامی آی‌پی‌ها استفاده می‌شود.",
+    baseConfigUrlLabel: isEn ? "Base VPN Config (VLESS/VMess/Trojan)" : "کانفیگ خام پایه (VLESS/VMess/Trojan)",
+    baseConfigUrlDesc: isEn 
+      ? "Direct test of connection quality & download speed through this config path." 
+      : "تست پینگ و سرعت واقعی مستقیم از طریق این کانفیگ (جایگزینی آی‌پی) انجام می‌شود.",
+    speedTestSizeLabel: isEn ? "Speed Test File Size (MB)" : "حجم فایل تست سرعت (مگابایت)",
+    speedTestSizeDesc: isEn 
+      ? "The amount of data in megabytes to download for calculating speed." 
+      : "میزان داده‌ای (مگابایت) که برای سنجش واقعی سرعت دانلود می‌شود.",
+    speedTestDurationLabel: isEn ? "Max Download Duration (Seconds)" : "حداکثر زمان دانلود (ثانیه)",
+    speedTestDurationDesc: isEn 
+      ? "Maximum allowed time for the download test to run before stopping." 
+      : "حداکثر زمانی (ثانیه) که تست سرعت هر آی‌پی اجازه دارد ادامه داشته باشد.",
     batchSpeedTestBtn: isEn ? "Speed Test All Clean IPs" : "تست سرعت گروهی آی‌پی‌های تمیز",
     batchSpeedTesting: isEn ? "Testing All..." : "در حال تست گروهی...",
     batchSpeedProgressText: (current: number, total: number) => 
@@ -250,7 +271,8 @@ export default function App() {
           timeout: timeoutMs,
           tls: useTls,
           hostHeader,
-          testType
+          testType,
+          baseConfigUrl
         })
       });
 
@@ -297,8 +319,10 @@ export default function App() {
           port,
           tls: useTls,
           hostHeader,
-          downloadSizeMb: 1.5, // 1.5 MB download limit
-          customUrl: customSpeedUrl
+          downloadSizeMb,
+          downloadTimeoutSec,
+          customUrl: customSpeedUrl,
+          baseConfigUrl
         })
       });
 
@@ -611,6 +635,70 @@ export default function App() {
                       className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-[11px] text-gray-200 focus:outline-none focus:border-indigo-500 font-mono"
                     />
                     <p className="text-[10px] text-gray-500 leading-normal">{t.customSpeedUrlDesc}</p>
+                  </div>
+
+                  {/* Base VPN Config Input */}
+                  <div className="space-y-1.5 pt-2 border-t border-gray-850">
+                    <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                      <span>{t.baseConfigUrlLabel}</span>
+                      <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                    </label>
+                    <input
+                      type="text"
+                      value={baseConfigUrl}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setBaseConfigUrl(val);
+                        localStorage.setItem("cf_base_config_url", val);
+                      }}
+                      placeholder="vless://... or vmess://..."
+                      dir="ltr"
+                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-[11px] text-gray-200 focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                    <p className="text-[10px] text-gray-500 leading-normal">{t.baseConfigUrlDesc}</p>
+                  </div>
+
+                  {/* Speed Test Options: Size & Duration */}
+                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-850">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                        <span>{t.speedTestSizeLabel}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        max="50"
+                        value={downloadSizeMb}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value) || 1.0;
+                          setDownloadSizeMb(val);
+                          localStorage.setItem("cf_download_size_mb", val.toString());
+                        }}
+                        className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <p className="text-[9px] text-gray-500 leading-normal">{t.speedTestSizeDesc}</p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                        <span>{t.speedTestDurationLabel}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        max="120"
+                        value={downloadTimeoutSec}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 5;
+                          setDownloadTimeoutSec(val);
+                          localStorage.setItem("cf_download_timeout_sec", val.toString());
+                        }}
+                        className="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs text-gray-200 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <p className="text-[9px] text-gray-500 leading-normal">{t.speedTestDurationDesc}</p>
+                    </div>
                   </div>
 
                   {/* Custom IP input area */}

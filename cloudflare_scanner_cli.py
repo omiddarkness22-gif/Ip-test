@@ -65,6 +65,7 @@ class CloudflareCliScanner:
         self.scan_results = []
         self.favorites = []
         self.custom_download_url = "https://www.dl.farsroid.com/game/Pixel-Cup-Soccer-Ultimate-1(www.Farsroid.com).apk"
+        self.base_config_url = ""
         self.port = 443
         self.timeout_sec = 1.5
         self.host_header = "speed.cloudflare.com"
@@ -219,6 +220,105 @@ class CloudflareCliScanner:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Encoding": "identity"
         }
+
+        # Check if user has specified a base VPN configuration (e.g. vless://)
+        # If yes, we can do the speed test request directly through the target clean IP using the custom SNI/Host and path.
+        base_config = getattr(self, "base_config_url", "").strip()
+        if base_config:
+            try:
+                import urllib.parse
+                import base64
+                import json
+                import ssl
+
+                sni_to_use = None
+                host_to_use = None
+                path_to_use = None
+                port_to_use = "443"
+                is_ws = False
+
+                if base_config.startswith("vless://") or base_config.startswith("trojan://"):
+                    protocol = "vless" if base_config.startswith("vless://") else "trojan"
+                    url_part = base_config[len(protocol) + 3:]
+                    at_idx = url_part.find("@")
+                    hash_idx = url_part.find("#")
+                    if at_idx != -1:
+                        remaining = url_part[at_idx+1:hash_idx] if hash_idx != -1 else url_part[at_idx+1:]
+                        q_idx = remaining.find("?")
+                        addr_port = remaining[:q_idx] if q_idx != -1 else remaining
+                        query = remaining[q_idx+1:] if q_idx != -1 else ""
+                        
+                        colon_idx = addr_port.rfind(":")
+                        if colon_idx != -1:
+                            sni_to_use = addr_port[:colon_idx]
+                            port_to_use = addr_port[colon_idx+1:]
+                        else:
+                            sni_to_use = addr_port
+                        
+                        params = urllib.parse.parse_qs(query)
+                        if "sni" in params and params["sni"]:
+                            sni_to_use = params["sni"][0]
+                        if "host" in params and params["host"]:
+                            host_to_use = params["host"][0]
+                        if "path" in params and params["path"]:
+                            path_to_use = params["path"][0]
+                        if "type" in params and params["type"] and "ws" in params["type"]:
+                            is_ws = True
+
+                elif base_config.startswith("vmess://"):
+                    b64_str = base_config[8:].strip()
+                    b64_str += "=" * ((4 - len(b64_str) % 4) % 4)
+                    decoded = base64.b64decode(b64_str).decode("utf-8")
+                    json_data = json.loads(decoded)
+                    sni_to_use = json_data.get("sni") or json_data.get("host") or json_data.get("add")
+                    host_to_use = json_data.get("host") or json_data.get("add")
+                    path_to_use = json_data.get("path")
+                    port_to_use = str(json_data.get("port", "443"))
+                    if json_data.get("net") == "ws":
+                        is_ws = True
+
+                # If we have parsed a valid SNI from the config, test the speed using this configuration context
+                if sni_to_use:
+                    test_headers = headers.copy()
+                    test_headers["Host"] = host_to_use or sni_to_use
+                    
+                    # We can use the configured path, or fallback to standard speedtest path
+                    actual_path = path_to_use if path_to_use else "/__down?bytes=2500000"
+                    if not actual_path.startswith("/"):
+                        actual_path = "/" + actual_path
+                        
+                    url = f"https://{ip}:{port_to_use}{actual_path}"
+                    start_time = time.time()
+                    bytes_downloaded = 0
+                    
+                    if has_requests:
+                        response = requests.get(url, headers=test_headers, timeout=4.0, verify=False, stream=True)
+                        if response.status_code in [200, 101]:
+                            for chunk in response.iter_content(chunk_size=65536):
+                                if chunk:
+                                    bytes_downloaded += len(chunk)
+                                    if bytes_downloaded >= byte_limit or (time.time() - start_time) > 4.0:
+                                        break
+                    else:
+                        req = urllib.request.Request(url, headers=test_headers)
+                        ctx = ssl.create_default_context()
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                        with urllib.request.urlopen(req, timeout=4.0, context=ctx) as response:
+                            while bytes_downloaded < byte_limit:
+                                chunk = response.read(65536)
+                                if not chunk:
+                                    break
+                                bytes_downloaded += len(chunk)
+                                if (time.time() - start_time) > 4.0:
+                                    break
+                                    
+                    duration = time.time() - start_time
+                    if bytes_downloaded > 51200:
+                        speed_mbps = (bytes_downloaded * 8) / (duration * 1000000)
+                        return speed_mbps
+            except Exception:
+                pass
 
         # 1. OPTION A: If using a custom download link (like Farsroid) that is NOT Cloudflare-owned,
         # we download it DIRECTLY (without replacing domain with IP). This measures overall connection/VPN tunnel speed,
@@ -520,14 +620,29 @@ class CloudflareCliScanner:
                 break
 
     def settings_menu(self):
-        self.print_logo()
-        print(f"{CLR_CYAN}⚙️ تنظیمات تست سرعت دانلود{CLR_RESET}\n")
-        print(f"لینک فایل فعلی جهت تست سرعت:\n {CLR_BOLD}{self.custom_download_url}{CLR_RESET}\n")
-        new_url = input("آدرس لینک دانلود جدید را وارد کنید (یا Enter برای انصراف): ").strip()
-        if new_url:
-            self.custom_download_url = new_url
-            print(f"{CLR_GREEN}لینک با موفقیت آپدیت شد.{CLR_RESET}")
-        time.sleep(1.5)
+        while True:
+            self.print_logo()
+            print(f"{CLR_CYAN}⚙️ تنظیمات تست سرعت و پینگ{CLR_RESET}\n")
+            print(f"  {CLR_YELLOW}1.{CLR_RESET} لینک دانلود تست سرعت: {CLR_BOLD}{self.custom_download_url}{CLR_RESET}")
+            print(f"  {CLR_YELLOW}2.{CLR_RESET} کانفیگ خام پایه جهت تست مستقیم: {CLR_BOLD}{self.base_config_url or 'تعریف نشده'}{CLR_RESET}")
+            print(f"  {CLR_YELLOW}0.{CLR_RESET} بازگشت")
+            print("\n" + "-"*40)
+            
+            choice = input(f"{CLR_BOLD}گزینه مورد نظر را انتخاب کنید: {CLR_RESET}").strip()
+            if choice == "1":
+                new_url = input("\nآدرس لینک دانلود جدید را وارد کنید (یا Enter برای انصراف): ").strip()
+                if new_url:
+                    self.custom_download_url = new_url
+                    print(f"{CLR_GREEN}لینک با موفقیت آپدیت شد.{CLR_RESET}")
+                    time.sleep(1)
+            elif choice == "2":
+                new_config = input("\nکانفیگ خام پایه را وارد کنید (VLESS/VMess/Trojan) (یا Enter برای انصراف): ").strip()
+                if new_config:
+                    self.base_config_url = new_config
+                    print(f"{CLR_GREEN}کانفیگ پایه با موفقیت ذخیره شد.{CLR_RESET}")
+                    time.sleep(1)
+            elif choice == "0":
+                break
 
 
 if __name__ == "__main__":

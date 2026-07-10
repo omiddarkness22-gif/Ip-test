@@ -3,6 +3,8 @@ import path from "path";
 import https from "https";
 import http from "http";
 import net from "net";
+import crypto from "crypto";
+import WebSocket from "ws";
 import { createServer as createViteServer } from "vite";
 
 const app = express();
@@ -37,13 +39,294 @@ function tcpPing(ip: string, port: number, timeout: number = 1500): Promise<numb
 }
 
 // Helper for HTTP/HTTPS Trace Ping
+interface FullParsedConfig {
+  protocol: "vless" | "vmess" | "trojan" | null;
+  uuidOrPassword?: string;
+  sni?: string;
+  host?: string;
+  path?: string;
+  port?: number;
+  tls?: boolean;
+}
+
+function parseFullVpnConfig(config: string): FullParsedConfig | null {
+  try {
+    const trimmed = config.trim();
+    if (!trimmed) return null;
+    
+    if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
+      const isVless = trimmed.startsWith("vless://");
+      const protocol = isVless ? "vless" : "trojan";
+      
+      let urlPart = trimmed.substring(protocol.length + 3);
+      const hashIdx = urlPart.indexOf("#");
+      if (hashIdx !== -1) {
+        urlPart = urlPart.substring(0, hashIdx);
+      }
+      
+      const atIdx = urlPart.indexOf("@");
+      if (atIdx === -1) return null;
+      
+      const uuidOrPassword = urlPart.substring(0, atIdx);
+      const remaining = urlPart.substring(atIdx + 1);
+      const qIdx = remaining.indexOf("?");
+      const addrPort = qIdx !== -1 ? remaining.substring(0, qIdx) : remaining;
+      const queryStr = qIdx !== -1 ? remaining.substring(qIdx + 1) : "";
+      
+      let parsedSni: string | undefined;
+      let parsedPort = 443;
+      
+      const colonIdx = addrPort.lastIndexOf(":");
+      if (colonIdx !== -1) {
+        parsedSni = addrPort.substring(0, colonIdx);
+        parsedPort = parseInt(addrPort.substring(colonIdx + 1), 10) || 443;
+      } else {
+        parsedSni = addrPort;
+      }
+      
+      const searchParams = new URLSearchParams(queryStr);
+      const sniParam = searchParams.get("sni") || undefined;
+      const hostParam = searchParams.get("host") || undefined;
+      const pathParam = searchParams.get("path") || undefined;
+      const securityParam = searchParams.get("security") || undefined;
+      
+      const sni = sniParam || parsedSni;
+      const host = hostParam || sni;
+      const path = pathParam ? decodeURIComponent(pathParam) : undefined;
+      const tls = securityParam !== "none";
+      
+      return {
+        protocol,
+        uuidOrPassword,
+        sni,
+        host,
+        path,
+        port: parsedPort,
+        tls
+      };
+    } else if (trimmed.startsWith("vmess://")) {
+      const b64Str = trimmed.substring(8).trim();
+      const paddedB64 = b64Str + "=".repeat((4 - (b64Str.length % 4)) % 4);
+      const decoded = Buffer.from(paddedB64, "base64").toString("utf-8");
+      const json_data = JSON.parse(decoded);
+      
+      const sni = json_data.sni || json_data.host || json_data.add;
+      const host = json_data.host || json_data.add;
+      const path = json_data.path;
+      const port = parseInt(json_data.port, 10) || 443;
+      const tls = json_data.tls === "tls";
+      
+      return {
+        protocol: "vmess",
+        uuidOrPassword: json_data.id,
+        sni,
+        host,
+        path,
+        port,
+        tls
+      };
+    }
+  } catch (err) {
+    console.error("Error parsing VPN config:", err);
+  }
+  return null;
+}
+
+interface VpnWsResult {
+  latency?: number;
+  speedBytesPerSec?: number;
+  bytesDownloaded?: number;
+  durationMs?: number;
+  error?: string;
+}
+
+function testVpnWs(
+  ip: string,
+  config: FullParsedConfig,
+  action: "ping" | "speed",
+  downloadBytes: number = 1024 * 1024, // 1MB default
+  timeoutMs: number = 3000
+): Promise<VpnWsResult> {
+  return new Promise((resolve) => {
+    const { protocol, uuidOrPassword, sni, host, path, port, tls } = config;
+    if (!protocol || (protocol !== "vless" && protocol !== "trojan")) {
+      resolve({ error: "Unsupported protocol for direct tunnel scan" });
+      return;
+    }
+    
+    const targetPort = port || 443;
+    const isTls = tls !== false;
+    
+    let wsUrl = `${isTls ? "wss" : "ws"}://${ip}:${targetPort}`;
+    if (path) {
+      let cleanPath = path;
+      if (!cleanPath.startsWith("/")) cleanPath = "/" + cleanPath;
+      wsUrl += cleanPath;
+    }
+    
+    const wsHeaders: any = {
+      "Host": host || sni || "speed.cloudflare.com",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    };
+    
+    const ws = new WebSocket(wsUrl, {
+      headers: wsHeaders,
+      servername: sni || host,
+      rejectUnauthorized: false,
+      handshakeTimeout: timeoutMs
+    } as any);
+    
+    const startTime = Date.now();
+    let connectedTime = 0;
+    let bytesDownloaded = 0;
+    let firstMessageReceived = false;
+    let timeoutTimer: NodeJS.Timeout;
+    
+    const cleanup = () => {
+      clearTimeout(timeoutTimer);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.terminate();
+      }
+    };
+    
+    timeoutTimer = setTimeout(() => {
+      cleanup();
+      resolve({ error: "Timeout" });
+    }, timeoutMs + 1500);
+    
+    ws.on("open", () => {
+      connectedTime = Date.now();
+      
+      let headerBuf: Buffer;
+      
+      const targetHost = "speed.cloudflare.com";
+      const destPort = 80;
+      const hostBuffer = Buffer.from(targetHost, "utf-8");
+      
+      if (protocol === "vless") {
+        const uuidHex = (uuidOrPassword || "").replace(/-/g, "");
+        if (uuidHex.length !== 32) {
+          cleanup();
+          resolve({ error: "Invalid UUID format" });
+          return;
+        }
+        const uuidBuffer = Buffer.from(uuidHex, "hex");
+        
+        headerBuf = Buffer.alloc(1 + 16 + 1 + 1 + 2 + 1 + 1 + hostBuffer.length);
+        let offset = 0;
+        headerBuf.writeUInt8(0, offset++); // VLESS Version 0
+        uuidBuffer.copy(headerBuf, offset); offset += 16; // UUID
+        headerBuf.writeUInt8(0, offset++); // Addon length M = 0
+        headerBuf.writeUInt8(1, offset++); // Command: 1 (TCP connection)
+        headerBuf.writeUInt16BE(destPort, offset); offset += 2; // Port
+        headerBuf.writeUInt8(2, offset++); // Address Type: 2 (Domain)
+        headerBuf.writeUInt8(hostBuffer.length, offset++); // Host Length
+        hostBuffer.copy(headerBuf, offset); offset += hostBuffer.length;
+      } else {
+        // Trojan Protocol
+        const password = uuidOrPassword || "";
+        const hashHex = crypto.createHash("sha224").update(password).digest("hex");
+        const hashBuf = Buffer.from(hashHex, "ascii");
+        
+        headerBuf = Buffer.alloc(hashBuf.length + 2 + 1 + 1 + 1 + hostBuffer.length + 2 + 2);
+        let offset = 0;
+        hashBuf.copy(headerBuf, offset); offset += hashBuf.length; // Password SHA224 hash
+        headerBuf.write("\r\n", offset, 2, "ascii"); offset += 2; // CRLF
+        headerBuf.writeUInt8(1, offset++); // Command: 1 (TCP)
+        headerBuf.writeUInt8(2, offset++); // Address Type: 2 (Domain)
+        headerBuf.writeUInt8(hostBuffer.length, offset++); // Host Length
+        hostBuffer.copy(headerBuf, offset); offset += hostBuffer.length; // Host bytes
+        headerBuf.writeUInt16BE(destPort, offset); offset += 2; // Port
+        headerBuf.write("\r\n", offset, 2, "ascii"); offset += 2; // CRLF
+      }
+      
+      // Build HTTP GET Request to send inside the tunnel
+      let httpRequestStr = "";
+      if (action === "ping") {
+        httpRequestStr = "GET /cdn-cgi/trace HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n";
+      } else {
+        httpRequestStr = `GET /__down?bytes=${downloadBytes} HTTP/1.1\r\nHost: speed.cloudflare.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n`;
+      }
+      const httpPayload = Buffer.from(httpRequestStr, "utf-8");
+      const initialFrame = Buffer.concat([headerBuf, httpPayload]);
+      
+      ws.send(initialFrame, { binary: true }, (err) => {
+        if (err) {
+          cleanup();
+          resolve({ error: "Failed to send handshaking payload" });
+        }
+      });
+    });
+    
+    ws.on("message", (data: any, isBinary: boolean) => {
+      if (!isBinary) return;
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      
+      let payload = buf;
+      if (!firstMessageReceived) {
+        firstMessageReceived = true;
+        
+        if (protocol === "vless") {
+          // VLESS response header: Version (1 byte), Addons length M (1 byte), Addons (M bytes)
+          if (buf.length >= 2) {
+            const addonLen = buf.readUInt8(1);
+            if (buf.length >= 2 + addonLen) {
+              payload = buf.subarray(2 + addonLen);
+            }
+          }
+        }
+        
+        if (action === "ping") {
+          const latency = Date.now() - startTime;
+          cleanup();
+          resolve({ latency });
+          return;
+        }
+      }
+      
+      bytesDownloaded += payload.length;
+      
+      if (action === "speed") {
+        const elapsed = (Date.now() - connectedTime) / 1000;
+        if (bytesDownloaded >= downloadBytes || elapsed >= (timeoutMs / 1000)) {
+          const durationMs = Math.max(10, Date.now() - connectedTime);
+          const speedBytesPerSec = bytesDownloaded / (durationMs / 1000);
+          cleanup();
+          resolve({ speedBytesPerSec, bytesDownloaded, durationMs });
+        }
+      }
+    });
+    
+    ws.on("error", (err) => {
+      cleanup();
+      resolve({ error: err.message || "WS Connection Error" });
+    });
+    
+    ws.on("close", () => {
+      cleanup();
+      if (action === "speed" && bytesDownloaded > 1024) {
+        const durationMs = Math.max(10, Date.now() - connectedTime);
+        const speedBytesPerSec = bytesDownloaded / (durationMs / 1000);
+        resolve({ speedBytesPerSec, bytesDownloaded, durationMs });
+      } else if (action === "ping" && firstMessageReceived) {
+        const latency = Date.now() - startTime;
+        resolve({ latency });
+      } else {
+        resolve({ error: "Closed before receiving valid data" });
+      }
+    });
+  });
+}
+
+// Helper for HTTP/HTTPS Trace Ping
 function httpPing(
   ip: string,
   port: number,
   timeout: number = 2000,
   tls: boolean = true,
   hostHeader?: string,
-  customPath?: string
+  customPath?: string,
+  sni?: string
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
@@ -64,7 +347,7 @@ function httpPing(
     const targetHost = hostHeader || "speed.cloudflare.com";
     options.headers["Host"] = targetHost;
     if (tls) {
-      options.servername = targetHost; // Sets TLS SNI
+      options.servername = sni || targetHost; // Sets TLS SNI
     }
     
     const req = requestModule.request(options, (res) => {
@@ -96,12 +379,14 @@ function testSpeed(
   hostHeader?: string,
   downloadBytes: number = 1572864, // 1.5MB default
   timeout: number = 8000,
-  customUrl?: string
+  customUrl?: string,
+  sni?: string,
+  customPath?: string
 ): Promise<{ speedBytesPerSec: number; bytesDownloaded: number; durationMs: number }> {
   return new Promise((resolve, reject) => {
     let isTls = tls;
     let targetPort = port;
-    let targetPath = `/__down?bytes=${downloadBytes}`;
+    let targetPath = customPath || `/__down?bytes=${downloadBytes}`;
     let targetHost = hostHeader || "speed.cloudflare.com";
     let byteLimit = downloadBytes;
 
@@ -137,7 +422,7 @@ function testSpeed(
     };
     
     if (isTls) {
-      options.servername = targetHost;
+      options.servername = sni || targetHost;
     }
     
     let bytesDownloaded = 0;
@@ -163,11 +448,11 @@ function testSpeed(
         return;
       }
       
-      // Limit speed test to maximum 4 seconds per IP
+      // Limit speed test to maximum timeout per IP
       const speedTimeout = setTimeout(() => {
         req.destroy();
         cleanupAndResolve();
-      }, 4000);
+      }, timeout);
 
       res.on("data", (chunk) => {
         bytesDownloaded += chunk.length;
@@ -203,16 +488,41 @@ function testSpeed(
 
 // API Route: Ping Batch of IPs (with Concurrency Control)
 app.post("/api/scan/ping", async (req, res) => {
-  const { ips, port, timeout, tls, hostHeader, customPath, testType } = req.body;
+  const { ips, port, timeout, tls, hostHeader, customPath, testType, baseConfigUrl } = req.body;
   
   if (!Array.isArray(ips) || ips.length === 0) {
     res.status(400).json({ error: "Invalid or empty IP list" });
     return;
   }
   
-  const targetPort = Number(port) || 443;
+  let configPort = Number(port) || 443;
+  let configTls = tls !== false;
+  let configHost = hostHeader || "speed.cloudflare.com";
+  let configPath = customPath || "/cdn-cgi/trace";
+  let configSni: string | undefined = undefined;
+
+  let parsedConfig: FullParsedConfig | null = null;
+  if (baseConfigUrl) {
+    parsedConfig = parseFullVpnConfig(baseConfigUrl);
+    if (parsedConfig) {
+      if (parsedConfig.port) configPort = parsedConfig.port;
+      if (parsedConfig.tls !== undefined) configTls = parsedConfig.tls;
+      if (parsedConfig.host) configHost = parsedConfig.host;
+      if (parsedConfig.path) {
+        configPath = parsedConfig.path;
+        if (!configPath.startsWith("/")) {
+          configPath = "/" + configPath;
+        }
+      } else {
+        configPath = "/cdn-cgi/trace";
+      }
+      if (parsedConfig.sni) configSni = parsedConfig.sni;
+    }
+  }
+
+  const targetPort = configPort;
   const targetTimeout = Number(timeout) || 1500;
-  const isTls = tls !== false;
+  const isTls = configTls;
   const targetTestType = testType || "tcp"; // "tcp" or "http"
   
   // Controlled concurrency scanning
@@ -227,10 +537,20 @@ app.post("/api/scan/ping", async (req, res) => {
       
       try {
         let latency: number;
-        if (targetTestType === "tcp") {
-          latency = await tcpPing(ip, targetPort, targetTimeout);
+        // Direct Tunnel Test for VLESS and Trojan over WS
+        if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
+          const wsResult = await testVpnWs(ip, parsedConfig, "ping", 0, targetTimeout);
+          if (wsResult.latency !== undefined) {
+            latency = wsResult.latency;
+          } else {
+            throw new Error(wsResult.error || "Tunnel connection failed");
+          }
         } else {
-          latency = await httpPing(ip, targetPort, targetTimeout, isTls, hostHeader, customPath);
+          if (targetTestType === "tcp") {
+            latency = await tcpPing(ip, targetPort, targetTimeout);
+          } else {
+            latency = await httpPing(ip, targetPort, targetTimeout, isTls, configHost, configPath, configSni);
+          }
         }
         results[currentIndex] = { ip, latency, success: true };
       } catch (err: any) {
@@ -247,35 +567,80 @@ app.post("/api/scan/ping", async (req, res) => {
 
 // API Route: Test Speed for a Single IP
 app.post("/api/scan/speed", async (req, res) => {
-  const { ip, port, tls, hostHeader, downloadSizeMb, customUrl } = req.body;
+  const { ip, port, tls, hostHeader, downloadSizeMb, downloadTimeoutSec, customUrl, baseConfigUrl } = req.body;
   
   if (!ip) {
     res.status(400).json({ error: "IP address is required" });
     return;
   }
   
-  const targetPort = Number(port) || 443;
-  const isTls = tls !== false;
+  let configPort = Number(port) || 443;
+  let configTls = tls !== false;
+  let configHost = hostHeader || "speed.cloudflare.com";
+  let configPath: string | undefined = undefined;
+  let configSni: string | undefined = undefined;
+  
+  let parsedConfig: FullParsedConfig | null = null;
+  if (baseConfigUrl) {
+    parsedConfig = parseFullVpnConfig(baseConfigUrl);
+    if (parsedConfig) {
+      if (parsedConfig.port) configPort = parsedConfig.port;
+      if (parsedConfig.tls !== undefined) configTls = parsedConfig.tls;
+      if (parsedConfig.host) configHost = parsedConfig.host;
+      if (parsedConfig.path) {
+        configPath = parsedConfig.path;
+        if (!configPath.startsWith("/")) {
+          configPath = "/" + configPath;
+        }
+      }
+      if (parsedConfig.sni) configSni = parsedConfig.sni;
+    }
+  }
+
+  const targetPort = configPort;
+  const isTls = configTls;
   // Convert MB to bytes (1MB = 1048576 bytes)
   const sizeMb = Number(downloadSizeMb) || 1.5;
   const downloadBytes = Math.round(sizeMb * 1048576);
+  
+  const timeoutSec = Number(downloadTimeoutSec) || 8;
+  const timeoutMs = timeoutSec * 1000;
   
   try {
     let result;
     let fallbackUsed = false;
     let originalError = "";
 
-    if (customUrl) {
+    // Direct Tunnel Speed Test for VLESS and Trojan over WS
+    if (parsedConfig && (parsedConfig.protocol === "vless" || parsedConfig.protocol === "trojan")) {
       try {
-        result = await testSpeed(ip, targetPort, isTls, hostHeader, downloadBytes, 8000, customUrl);
+        const wsResult = await testVpnWs(ip, parsedConfig, "speed", downloadBytes, timeoutMs);
+        if (wsResult.speedBytesPerSec !== undefined) {
+          result = {
+            speedBytesPerSec: wsResult.speedBytesPerSec,
+            bytesDownloaded: wsResult.bytesDownloaded || 0,
+            durationMs: wsResult.durationMs || 0
+          };
+        } else {
+          throw new Error(wsResult.error || "Tunnel speed test failed");
+        }
+      } catch (err: any) {
+        originalError = err.message || "Tunnel speed test failed";
+        // Fallback to standard Cloudflare speed test on the same IP
+        result = await testSpeed(ip, 443, true, "speed.cloudflare.com", downloadBytes, timeoutMs);
+        fallbackUsed = true;
+      }
+    } else if (customUrl) {
+      try {
+        result = await testSpeed(ip, targetPort, isTls, configHost, downloadBytes, timeoutMs, customUrl, configSni);
       } catch (err: any) {
         originalError = err.message || "Custom URL speed test failed";
         // Fallback to standard Cloudflare speed test on the same IP
-        result = await testSpeed(ip, 443, true, "speed.cloudflare.com", downloadBytes, 8000);
+        result = await testSpeed(ip, 443, true, "speed.cloudflare.com", downloadBytes, timeoutMs);
         fallbackUsed = true;
       }
     } else {
-      result = await testSpeed(ip, targetPort, isTls, hostHeader, downloadBytes, 8000);
+      result = await testSpeed(ip, targetPort, isTls, configHost, downloadBytes, timeoutMs, undefined, configSni, configPath);
     }
 
     const speedMbps = (result.speedBytesPerSec * 8) / 1000000;
